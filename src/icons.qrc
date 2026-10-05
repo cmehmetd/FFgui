@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/icons">
+    <file>FFgui.png</file>
+  </qresource>
+</RCC>
