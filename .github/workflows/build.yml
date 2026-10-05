@@ -20,7 +20,7 @@ jobs:
       - name: Bağımlılıkları kur
         run: |
           sudo apt-get update
-          sudo apt-get install -y qt6-base-dev cmake g++ file wget
+          sudo apt-get install -y qt6-base-dev libgl1-mesa-dev libegl1-mesa-dev cmake g++ file wget
 
       - name: Derle
         run: |
