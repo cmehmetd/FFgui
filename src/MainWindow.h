@@ -25,12 +25,14 @@ public:
 private slots:
     void browseInput();
     void browseOutput();
+    void browseSubtitle();
     void updateCommandPreview();
     void startConversion();
     void stopConversion();
     void onProcessOutput();
     void onProcessFinished(int exitCode, QProcess::ExitStatus status);
     void onInputChanged();
+    void onSubModeChanged(int index);
     void onDistroChanged(int index);
     void onTopTabChanged(int index);
     void installWindowsFfmpeg();
@@ -48,6 +50,8 @@ private:
     QString distroDefaultCommand(const QString &distroKey) const;
     double durationToSeconds(const QString &d) const;
     void probeInputFile(const QString &path);
+    void refreshMediaPreview();
+    QString formatPreviewDuration(double secs) const;
 
     QString m_ffmpegPath = QStringLiteral("ffmpeg");
     QString m_ffprobePath = QStringLiteral("ffprobe");
@@ -82,6 +86,8 @@ private:
     QSpinBox *m_heightSpin = nullptr;
     QComboBox *m_fpsCombo = nullptr;
     QCheckBox *m_faststartCheck = nullptr;
+    QLabel *m_thumbLabel = nullptr;
+    QLabel *m_mediaInfoLabel = nullptr;
 
     // Ses
     QComboBox *m_audioCodecCombo = nullptr;
@@ -92,6 +98,13 @@ private:
     // Kesme
     QLineEdit *m_seekEdit = nullptr;
     QLineEdit *m_durationEdit = nullptr;
+
+    // Altyazı (harici dosya: ayrı kanal ya da kalıcı yazma)
+    QComboBox *m_subModeCombo = nullptr;
+    QLineEdit *m_subFileEdit = nullptr;
+    QLineEdit *m_subLangEdit = nullptr;
+    QComboBox *m_subCodecCombo = nullptr;
+    QCheckBox *m_subDefaultCheck = nullptr;
 
     // Ek
     QLineEdit *m_extraArgsEdit = nullptr;

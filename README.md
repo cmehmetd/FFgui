@@ -21,10 +21,14 @@ işletim sisteminizin Qt temasını (açık/koyu kip dahil) olduğu gibi kullan�
     `Diğer…` seçeneğinde komut elle yazılır)
   - Kullanılmayan sistemin bölümü tıklanamaz
 - **Video** — codec (H.264, H.265, VP9, AV1, MPEG-4, kopyalama), preset,
-  CRF kalitesi / bit hızı, çözünürlük, kare hızı, web için hızlı başlat
+  CRF kalitesi / bit hızı, çözünürlük, kare hızı, web için hızlı başlat;
+  sağda girdiden rastgele kare önizleme + altında orijinal video bilgileri
 - **Ses** — codec (AAC, MP3, Opus, AC-3, kopyalama), bit hızı,
   örnekleme hızı, kanal, sesi kaldırma
 - **Kesme** — başlangıç ve süre
+- **Altyazı** — harici dosya (`.srt/.ass/.vtt`)
+  - `Ayrı kanal olarak ekle`: açılıp kapatılabilen altyazı (`-map`, mp4→`mov_text`, mkv→`srt`)
+  - `Görüntüye kalıcı yaz`: geri alınamaz (`-vf subtitles=`), yeniden kodlama zorunludur
 - **Komut** — ek `ffmpeg` argümanları + oluşan komutun canlı önizlemesi
   (önizleme yalın `ffmpeg` ile başlar, her sistemde PATH üzerinden çözülür)
 - Yalnızca ilerleme çubuğu; `ffmpeg` günlüğü gösterilmez, sonuç ve hata
@@ -103,7 +107,7 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH="C:\Qt\6.x.x\msvc2022_64"
 ## Kullanım
 
 1. **Anasayfa** sekmesinde girdi ve çıktı dosyasını seçin.
-2. **Video**, **Ses**, **Kesme** sekmelerinde seçenekleri ayarlayın
+2. **Video**, **Ses**, **Kesme**, **Altyazı** sekmelerinde seçenekleri ayarlayın
    (bilinmeyen kısaltmalar için fareyle üzerine gelin, tooltip açıklamasını okuyun).
 3. Oluşan komutu **Komut** sekmesinde gözden geçirin.
 4. **Dönüştür** düğmesine basın; ilerlemeyi çubuktan izleyin.

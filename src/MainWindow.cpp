@@ -7,19 +7,26 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFileDialog>
+#include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QSizePolicy>
@@ -194,10 +201,14 @@ MainWindow::MainWindow(QWidget *parent)
     tabs->setDocumentMode(false);
     contentLayout->addWidget(tabs, 1);
 
-    // Video sekmesi
+    // Video sekmesi: solda seçenekler, sağda önizleme
     auto *videoTab = new QWidget(tabs);
-    auto *videoForm = new QFormLayout(videoTab);
-    m_videoCodecCombo = new QComboBox(videoTab);
+    auto *videoMain = new QHBoxLayout(videoTab);
+    auto *videoFormWidget = new QWidget(videoTab);
+    auto *videoForm = new QFormLayout(videoFormWidget);
+    videoForm->setContentsMargins(0, 0, 0, 0);
+    videoFormWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_videoCodecCombo = new QComboBox(videoFormWidget);
     m_videoCodecCombo->addItem(tr("H.264"), QStringLiteral("libx264"));
     m_videoCodecCombo->setItemData(0, QStringLiteral("libx264"), Qt::ToolTipRole);
     m_videoCodecCombo->addItem(tr("H.265 / HEVC"), QStringLiteral("libx265"));
@@ -290,6 +301,25 @@ MainWindow::MainWindow(QWidget *parent)
                                     "özellikle web'de yayınlarken önerilir. Yalnızca MP4/MOV çıkışlarda etkilidir."));
     videoForm->addRow(QString(), m_faststartCheck);
 
+    // Sağ taraf: rastgele kare önizleme + altında orijinal video bilgileri
+    videoMain->addWidget(videoFormWidget, 1);
+    auto *previewBox = new QVBoxLayout;
+    previewBox->setContentsMargins(6, 0, 0, 0);
+    m_thumbLabel = new QLabel(videoTab);
+    m_thumbLabel->setFixedSize(220, 124);
+    m_thumbLabel->setAlignment(Qt::AlignCenter);
+    m_thumbLabel->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    m_thumbLabel->setText(QString());
+    m_thumbLabel->setToolTip(tr("Girdi videosundan rastgele bir kare"));
+    previewBox->addWidget(m_thumbLabel, 0, Qt::AlignTop);
+    m_mediaInfoLabel = new QLabel(videoTab);
+    m_mediaInfoLabel->setWordWrap(true);
+    m_mediaInfoLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    m_mediaInfoLabel->setText(QString());
+    m_mediaInfoLabel->setToolTip(tr("Orijinal videonun çözünürlük, süre, codec ve boyut bilgileri"));
+    previewBox->addWidget(m_mediaInfoLabel, 1);
+    videoMain->addLayout(previewBox, 0);
+
     connect(m_resolutionCombo, &QComboBox::currentIndexChanged, this, [this](int idx) {
         const bool custom = m_resolutionCombo->itemData(idx).toString() == QLatin1String("custom");
         m_widthSpin->setEnabled(custom);
@@ -354,6 +384,61 @@ MainWindow::MainWindow(QWidget *parent)
     trimForm->addRow(QString(), trimHint);
     tabs->addTab(trimTab, tr("Kesme"));
 
+    // Altyazı sekmesi: harici dosyayı ayrı kanal olarak ekle ya da görüntüye kalıcı yaz
+    auto *subTab = new QWidget(tabs);
+    auto *subForm = new QFormLayout(subTab);
+    m_subModeCombo = new QComboBox(subTab);
+    m_subModeCombo->addItem(tr("Yok"), QStringLiteral("none"));
+    m_subModeCombo->addItem(tr("Ayrı kanal olarak ekle"), QStringLiteral("embed"));
+    m_subModeCombo->setItemData(1, tr("Harici altyazıyı çıktıya ayrı seçilebilir kanal olarak ekler (-map)"),
+                                Qt::ToolTipRole);
+    m_subModeCombo->addItem(tr("Görüntüye kalıcı yaz"), QStringLiteral("burn"));
+    m_subModeCombo->setItemData(2, tr("Altyazıyı görüntünün üstüne kalıcı olarak işler (-vf subtitles); geri alınamaz, yeniden kodlama zorunludur"),
+                                Qt::ToolTipRole);
+    m_subModeCombo->setToolTip(tr("Ayrı kanal: açılıp kapatılabilen altyazı. Kalıcı yazma: görüntüye işlenir, geri alınamaz"));
+    subForm->addRow(tr("Kip:"), m_subModeCombo);
+
+    auto *subRow = new QHBoxLayout;
+    m_subFileEdit = new QLineEdit(subTab);
+    m_subFileEdit->setPlaceholderText(tr("Altyazı dosyası (.srt/.ass/.vtt)…"));
+    m_subFileEdit->setClearButtonEnabled(true);
+    m_subFileEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_subFileEdit->setMinimumWidth(120);
+    m_subFileEdit->setToolTip(tr("Harici altyazı dosyası; eklemede ikinci girdi (-i), kalıcı yazmada filtre girdisi olur"));
+    auto *subBrowse = new QPushButton(tr("Gözat…"), subTab);
+    subRow->addWidget(m_subFileEdit, 1);
+    subRow->addWidget(subBrowse);
+    subForm->addRow(tr("Dosya:"), subRow);
+
+    m_subLangEdit = new QLineEdit(subTab);
+    m_subLangEdit->setPlaceholderText(tr("örn. tur"));
+    m_subLangEdit->setText(QStringLiteral("tur"));
+    m_subLangEdit->setToolTip(tr("Yalnızca ayrı kanal kipinde kullanılır; ISO 639 kodu (-metadata:s:s:0 language=)"));
+    subForm->addRow(tr("Dil:"), m_subLangEdit);
+
+    m_subCodecCombo = new QComboBox(subTab);
+    m_subCodecCombo->addItem(tr("Otomatik"), QStringLiteral("auto"));
+    m_subCodecCombo->addItem(QStringLiteral("mov_text"), QStringLiteral("mov_text"));
+    m_subCodecCombo->addItem(QStringLiteral("srt"), QStringLiteral("srt"));
+    m_subCodecCombo->addItem(QStringLiteral("ass"), QStringLiteral("ass"));
+    m_subCodecCombo->addItem(QStringLiteral("webvtt"), QStringLiteral("webvtt"));
+    m_subCodecCombo->addItem(tr("Kopyala"), QStringLiteral("copy"));
+    m_subCodecCombo->setToolTip(tr("Yalnızca ayrı kanal kipinde kullanılır; Otomatik çıkış uzantısına göre seçer (mp4→mov_text, mkv→srt)"));
+    subForm->addRow(tr("Altyazı codec:"), m_subCodecCombo);
+
+    m_subDefaultCheck = new QCheckBox(tr("Varsayılan altyazı yap"), subTab);
+    m_subDefaultCheck->setChecked(true);
+    m_subDefaultCheck->setToolTip(tr("Yalnızca ayrı kanal kipinde kullanılır (-disposition:s:0 default)"));
+    subForm->addRow(QString(), m_subDefaultCheck);
+
+    auto *subHint = new QLabel(tr("Ayrı kanal: kapatılabilir altyazı.\nKalıcı yazma: geri alınamaz, yeniden kodlama zorunludur."), subTab);
+    subHint->setWordWrap(true);
+    subForm->addRow(QString(), subHint);
+    tabs->addTab(subTab, tr("Altyazı"));
+
+    connect(subBrowse, &QPushButton::clicked, this, &MainWindow::browseSubtitle);
+    connect(m_subModeCombo, &QComboBox::currentIndexChanged, this, &MainWindow::onSubModeChanged);
+
     // Ek seçenekler sekmesi
     auto *extraTab = new QWidget(tabs);
     auto *extraLayout = new QVBoxLayout(extraTab);
@@ -417,6 +502,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_audioChannelsCombo, &QComboBox::currentIndexChanged, this, refresh);
     connect(m_seekEdit, &QLineEdit::textChanged, this, refresh);
     connect(m_durationEdit, &QLineEdit::textChanged, this, refresh);
+    connect(m_subModeCombo, &QComboBox::currentIndexChanged, this, refresh);
+    connect(m_subFileEdit, &QLineEdit::textChanged, this, refresh);
+    connect(m_subLangEdit, &QLineEdit::textChanged, this, refresh);
+    connect(m_subCodecCombo, &QComboBox::currentIndexChanged, this, refresh);
+    connect(m_subDefaultCheck, &QCheckBox::toggled, this, refresh);
     connect(m_extraArgsEdit, &QLineEdit::textChanged, this, refresh);
     connect(m_widthSpin, &QSpinBox::valueChanged, this, refresh);
     connect(m_heightSpin, &QSpinBox::valueChanged, this, refresh);
@@ -424,6 +514,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_topTabs, &QTabWidget::currentChanged, this, &MainWindow::onTopTabChanged);
 
     refreshFfmpegStatus();
+    onSubModeChanged(m_subModeCombo->currentIndex());
     updateCommandPreview();
     // Açılışta Anasayfa seçili; Kurulum sayfasına geçince anasayfa öğeleri gizlenir.
     m_topTabs->setCurrentWidget(m_ioPage);
@@ -446,11 +537,42 @@ void MainWindow::browseOutput()
         m_outputEdit->setText(path);
 }
 
+void MainWindow::browseSubtitle()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Altyazı dosyasını seç"), m_subFileEdit->text(),
+        tr("Altyazı (*.srt *.ass *.ssa *.vtt);;Tümü (*)"));
+    if (!path.isEmpty())
+        m_subFileEdit->setText(path);
+}
+
+void MainWindow::onSubModeChanged(int index)
+{
+    const QString mode = m_subModeCombo->itemData(index).toString();
+    const bool active = mode != QLatin1String("none");
+    const bool embed = mode == QLatin1String("embed");
+    m_subFileEdit->setEnabled(active);
+    // Kalıcı yazmada dil/codec/varsayılan anlamsız (görüntüye işlenir).
+    m_subLangEdit->setEnabled(embed);
+    m_subCodecCombo->setEnabled(embed);
+    m_subDefaultCheck->setEnabled(embed);
+    updateCommandPreview();
+}
+
 void MainWindow::onInputChanged()
 {
     const QString path = m_inputEdit->text().trimmed();
-    if (!path.isEmpty() && QFileInfo::exists(path))
+    if (!path.isEmpty() && QFileInfo::exists(path)) {
         probeInputFile(path);
+    } else {
+        m_totalSeconds = 0.0;
+        if (m_thumbLabel) {
+            m_thumbLabel->setPixmap(QPixmap());
+            m_thumbLabel->setText(QString());
+        }
+        if (m_mediaInfoLabel)
+            m_mediaInfoLabel->setText(QString());
+    }
     updateCommandPreview();
 }
 
@@ -471,6 +593,127 @@ void MainWindow::probeInputFile(const QString &path)
         if (secs > 0)
             m_totalSeconds = secs; // ilerleme yüzdesi için sessizce saklanır
     }
+    refreshMediaPreview();
+}
+
+QString MainWindow::formatPreviewDuration(double secs) const
+{
+    if (secs < 0)
+        secs = 0;
+    const int total = static_cast<int>(secs);
+    const int h = total / 3600;
+    const int m = (total % 3600) / 60;
+    const int s = total % 60;
+    if (h > 0)
+        return QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 2, 10, QLatin1Char('0'));
+    return QStringLiteral("%1:%2").arg(m).arg(s, 2, 10, QLatin1Char('0'));
+}
+
+void MainWindow::refreshMediaPreview()
+{
+    if (!m_thumbLabel || !m_mediaInfoLabel)
+        return;
+    const QString path = m_inputEdit->text().trimmed();
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        m_thumbLabel->setPixmap(QPixmap());
+        m_thumbLabel->setText(QString());
+        m_mediaInfoLabel->setText(QString());
+        return;
+    }
+
+    // ---- Orijinal video bilgileri (ffprobe json) ----
+    QString details = QFileInfo(path).fileName();
+    QProcess probe;
+    probe.start(m_ffprobePath,
+                {QStringLiteral("-v"), QStringLiteral("error"),
+                 QStringLiteral("-select_streams"), QStringLiteral("v:0"),
+                 QStringLiteral("-show_entries"), QStringLiteral("stream=width,height,codec_name,avg_frame_rate"),
+                 QStringLiteral("-show_entries"), QStringLiteral("format=duration,size,bit_rate"),
+                 QStringLiteral("-of"), QStringLiteral("json"), path});
+    if (probe.waitForFinished(4000) && probe.exitCode() == 0) {
+        const QJsonDocument doc = QJsonDocument::fromJson(probe.readAllStandardOutput());
+        const QJsonObject root = doc.object();
+        const QJsonObject fmt = root.value(QStringLiteral("format")).toObject();
+        const QJsonArray streams = root.value(QStringLiteral("streams")).toArray();
+        const QJsonObject vs = streams.isEmpty() ? QJsonObject() : streams.first().toObject();
+
+        const int w = vs.value(QStringLiteral("width")).toInt(0);
+        const int h = vs.value(QStringLiteral("height")).toInt(0);
+        const QString vcodec = vs.value(QStringLiteral("codec_name")).toString();
+        double fps = 0.0;
+        const QString fpsStr = vs.value(QStringLiteral("avg_frame_rate")).toString();
+        if (fpsStr.contains(QLatin1Char('/'))) {
+            const QStringList parts = fpsStr.split(QLatin1Char('/'));
+            const double num = parts.value(0).toDouble();
+            const double den = parts.value(1).toDouble();
+            if (den != 0)
+                fps = num / den;
+        }
+        const double dur = fmt.value(QStringLiteral("duration")).toString().toDouble();
+        if (dur > 0)
+            m_totalSeconds = dur;
+        const qint64 size = static_cast<qint64>(fmt.value(QStringLiteral("size")).toString().toDouble());
+        const qint64 bitrate = static_cast<qint64>(fmt.value(QStringLiteral("bit_rate")).toString().toDouble());
+
+        QStringList lines;
+        lines << QFileInfo(path).fileName();
+        QString line2;
+        if (w > 0 && h > 0)
+            line2 += QStringLiteral("%1×%2").arg(w).arg(h);
+        if (dur > 0)
+            line2 += (line2.isEmpty() ? QString() : QStringLiteral(" • ")) + formatPreviewDuration(dur);
+        if (!vcodec.isEmpty())
+            line2 += (line2.isEmpty() ? QString() : QStringLiteral(" • ")) + vcodec;
+        if (fps > 0.5)
+            line2 += (line2.isEmpty() ? QString() : QStringLiteral(" • "))
+                + tr("%1 fps").arg(QString::number(fps, 'f', fps >= 59.9 ? 0 : 1));
+        if (!line2.isEmpty())
+            lines << line2;
+        QString line3;
+        if (size > 0)
+            line3 += QLocale().formattedDataSize(size);
+        if (bitrate > 0)
+            line3 += (line3.isEmpty() ? QString() : QStringLiteral(" • "))
+                + tr("%1 kb/s").arg(qRound(static_cast<double>(bitrate) / 1000.0));
+        if (!line3.isEmpty())
+            lines << line3;
+        if (streams.isEmpty())
+            lines << tr("Video akışı bulunamadı.");
+        details = lines.join(QLatin1Char('\n'));
+    } else {
+        details = QStringLiteral("%1\n%2").arg(QFileInfo(path).fileName(), tr("Bilgi alınamadı."));
+    }
+    m_mediaInfoLabel->setText(details);
+
+    // ---- Rastgele kare (ffmpeg tek kare) ----
+    const bool ffmpegOk = !QStandardPaths::findExecutable(QFileInfo(m_ffmpegPath).fileName()).isEmpty()
+        || QFileInfo(m_ffmpegPath).isFile();
+    if (!ffmpegOk) {
+        m_thumbLabel->setPixmap(QPixmap());
+        m_thumbLabel->setText(tr("Önizleme yok"));
+        return;
+    }
+    double t = 1.0;
+    if (m_totalSeconds > 2.0)
+        t = m_totalSeconds * (0.10 + 0.80 * QRandomGenerator::global()->generateDouble());
+    const QString thumbPath = QDir::temp().filePath(QStringLiteral("FFgui_thumb.jpg"));
+    QProcess grab;
+    grab.start(m_ffmpegPath,
+               {QStringLiteral("-y"), QStringLiteral("-v"), QStringLiteral("error"),
+                QStringLiteral("-ss"), QString::number(t, 'f', 2),
+                QStringLiteral("-i"), path,
+                QStringLiteral("-vframes"), QStringLiteral("1"),
+                QStringLiteral("-vf"), QStringLiteral("scale=320:-1"), thumbPath});
+    if (grab.waitForFinished(6000) && grab.exitCode() == 0 && QFileInfo::exists(thumbPath)) {
+        const QPixmap pm(thumbPath);
+        if (!pm.isNull()) {
+            m_thumbLabel->setPixmap(pm.scaled(m_thumbLabel->size(), Qt::KeepAspectRatio,
+                                              Qt::SmoothTransformation));
+            return;
+        }
+    }
+    m_thumbLabel->setPixmap(QPixmap());
+    m_thumbLabel->setText(tr("Önizleme alınamadı"));
 }
 
 QStringList MainWindow::buildArguments() const
@@ -480,18 +723,62 @@ QStringList MainWindow::buildArguments() const
     // çıktı zaten varsa ffmpeg işlem yapmadan çıkar.
     args << QStringLiteral("-n");
 
+    const QString subMode = m_subModeCombo ? m_subModeCombo->currentData().toString() : QStringLiteral("none");
+    const QString subFile = m_subFileEdit ? m_subFileEdit->text().trimmed() : QString();
+    const bool useEmbed = subMode == QLatin1String("embed") && !subFile.isEmpty();
+    const bool useBurn = subMode == QLatin1String("burn") && !subFile.isEmpty();
+
     if (!m_seekEdit->text().trimmed().isEmpty())
         args << QStringLiteral("-ss") << m_seekEdit->text().trimmed();
 
     args << QStringLiteral("-i") << m_inputEdit->text().trimmed();
+    if (useEmbed)
+        args << QStringLiteral("-i") << subFile;
 
     if (!m_durationEdit->text().trimmed().isEmpty())
         args << QStringLiteral("-t") << m_durationEdit->text().trimmed();
+
+    // Ayrı kanal kipinde açık eşleme gerekir; yoksa ffmpeg varsayılan eşlemeyle
+    // altyazıyı düşürebilir ya da yanlış sesi seçebilir.
+    // "?": girdide ses yoksa bile komutun bozulmaması için.
+    if (useEmbed) {
+        args << QStringLiteral("-map") << QStringLiteral("0:v?");
+        const QString acodecEarly = m_audioCodecCombo->currentData().toString();
+        if (acodecEarly != QLatin1String("none"))
+            args << QStringLiteral("-map") << QStringLiteral("0:a?");
+        args << QStringLiteral("-map") << QStringLiteral("1");
+    }
+
+    // Video filtreleri tek "-vf" altında birleşir (scale + kalıcı yazma).
+    QStringList videoFilters;
+    const QString scaleKey = m_resolutionCombo->currentData().toString();
+    if (scaleKey == QLatin1String("custom"))
+        videoFilters << QStringLiteral("scale=%1:%2").arg(m_widthSpin->value()).arg(m_heightSpin->value());
+    else if (scaleKey != QLatin1String("same") && !scaleKey.isEmpty())
+        videoFilters << QStringLiteral("scale=%1").arg(scaleKey);
+
+    if (useBurn) {
+        // subtitles filtresi: yolu tek tırnak içine al, özel karakterleri kaçır.
+        // Windows "C:\..." için ters bölüleri bölüye çevir (ffmpeg kabul eder).
+        QString esc = subFile;
+        esc.replace(QLatin1Char('\\'), QLatin1String("/"));
+        esc.replace(QLatin1String("'"), QLatin1String("'\\''"));
+        esc.replace(QLatin1Char(':'), QLatin1String("\\:"));
+        esc.replace(QLatin1Char('['), QLatin1String("\\["));
+        esc.replace(QLatin1Char(']'), QLatin1String("\\]"));
+        esc.replace(QLatin1Char(','), QLatin1String("\\,"));
+        esc.replace(QLatin1Char(';'), QLatin1String("\\;"));
+        videoFilters << QStringLiteral("subtitles='%1'").arg(esc);
+    }
 
     // Video
     const QString vcodec = m_videoCodecCombo->currentData().toString();
     if (vcodec == QLatin1String("copy")) {
         args << QStringLiteral("-c:v") << QStringLiteral("copy");
+        // Kopyalamada scale geçersizdir ama kalıcı yazma filtresi önizlemede
+        // bilerek gösterilir; startConversion zaten engeller.
+        if (useBurn && !videoFilters.isEmpty())
+            args << QStringLiteral("-vf") << videoFilters.join(QLatin1Char(','));
     } else {
         args << QStringLiteral("-c:v") << vcodec;
         if (vcodec == QLatin1String("libx264") || vcodec == QLatin1String("libx265"))
@@ -511,14 +798,8 @@ QStringList MainWindow::buildArguments() const
                 args << QStringLiteral("-crf") << crf;
         }
 
-        const QString scale = m_resolutionCombo->currentData().toString();
-        if (scale == QLatin1String("custom"))
-            args << QStringLiteral("-vf")
-                 << QStringLiteral("scale=%1:%2").arg(m_widthSpin->value()).arg(m_heightSpin->value());
-        else if (scale != QLatin1String("same") && !scale.isEmpty()) {
-            QString vf = scale;
-            args << QStringLiteral("-vf") << QStringLiteral("scale=%1").arg(vf);
-        }
+        if (!videoFilters.isEmpty())
+            args << QStringLiteral("-vf") << videoFilters.join(QLatin1Char(','));
 
         const QString fps = m_fpsCombo->currentData().toString();
         if (!fps.isEmpty())
@@ -541,6 +822,28 @@ QStringList MainWindow::buildArguments() const
             if (!ch.isEmpty())
                 args << QStringLiteral("-ac") << ch;
         }
+    }
+
+    // Altyazı codec / metadata (yalnızca ayrı kanal kipinde)
+    if (useEmbed) {
+        QString scodec = m_subCodecCombo->currentData().toString();
+        if (scodec == QLatin1String("auto") || scodec.isEmpty()) {
+            const QString outLower = m_outputEdit->text().trimmed().toLower();
+            if (outLower.endsWith(QLatin1String(".mp4")) || outLower.endsWith(QLatin1String(".m4v"))
+                || outLower.endsWith(QLatin1String(".mov")) || outLower.endsWith(QLatin1String(".3gp"))
+                || outLower.endsWith(QLatin1String(".3g2")))
+                scodec = QStringLiteral("mov_text");
+            else if (outLower.endsWith(QLatin1String(".webm")))
+                scodec = QStringLiteral("webvtt");
+            else
+                scodec = QStringLiteral("srt");
+        }
+        args << QStringLiteral("-c:s") << scodec;
+        const QString lang = m_subLangEdit->text().trimmed().toLower();
+        if (!lang.isEmpty())
+            args << QStringLiteral("-metadata:s:s:0") << QStringLiteral("language=%1").arg(lang);
+        args << QStringLiteral("-disposition:s:0")
+             << (m_subDefaultCheck->isChecked() ? QStringLiteral("default") : QStringLiteral("0"));
     }
 
     if (m_faststartCheck->isChecked())
@@ -636,6 +939,33 @@ void MainWindow::startConversion()
                              tr("Bu çıktı dosyası zaten var ve üzerine yazılmayacak:\n%1\n\n"
                                 "Lütfen farklı bir dosya adı seçin.").arg(out));
         return;
+    }
+    // Altyazı doğrulama
+    const QString subMode = m_subModeCombo->currentData().toString();
+    const QString subFile = m_subFileEdit->text().trimmed();
+    if (subMode != QLatin1String("none")) {
+        if (subFile.isEmpty()) {
+            QMessageBox::warning(this, tr("Altyazı yok"),
+                                 tr("Altyazı kipi seçili ama dosya boş.\nLütfen altyazı dosyası seçin ya da kipi Yok yapın."));
+            return;
+        }
+        if (!QFileInfo::exists(subFile)) {
+            QMessageBox::warning(this, tr("Altyazı bulunamadı"),
+                                 tr("Altyazı dosyası diskte bulunamadı:\n%1").arg(subFile));
+            return;
+        }
+        if (QFileInfo(subFile).absoluteFilePath() == QFileInfo(out).absoluteFilePath()) {
+            QMessageBox::warning(this, tr("Güvenlik engeli"),
+                                 tr("Altyazı dosyası çıktı dosyasıyla aynı olamaz."));
+            return;
+        }
+        if (subMode == QLatin1String("burn")
+            && m_videoCodecCombo->currentData().toString() == QLatin1String("copy")) {
+            QMessageBox::warning(this, tr("Kalıcı yazma için yeniden kodlama zorunludur"),
+                                 tr("Altyazıyı görüntüye kalıcı yazma görüntüyü değiştirir, yeniden kodlama zorunludur.\n"
+                                    "Lütfen Video codec olarak Kopyala yerine H.264/H.265 seçin."));
+            return;
+        }
     }
     if (QStandardPaths::findExecutable(QFileInfo(m_ffmpegPath).fileName()).isEmpty()
         && !QFileInfo(m_ffmpegPath).isFile()) {
