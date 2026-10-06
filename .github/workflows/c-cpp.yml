@@ -8,6 +8,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -75,3 +78,9 @@ jobs:
       with:
         name: FFgui-AppImage
         path: ./*.AppImage
+
+    - name: Release'e ekle
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ./*.AppImage
