@@ -6,6 +6,11 @@ Video dönüştürme seçeneklerini sekmeli bir pencerede toplar, `ffmpeg` komut
 sizin için oluşturur ve tek tıkla çalıştırır. Özel tema içermez; arayüz
 işletim sisteminizin Qt temasını (açık/koyu kip dahil) olduğu gibi kullanır.
 
+> Derlemekle uğraşmak istemezseniz
+> [Releases](https://github.com/cmehmetd/FFgui/releases) sayfasından hazır
+> derlenmiş halini indirebilirsiniz (Linux için AppImage ve .deb,
+> Windows için zip).
+
 ## Ekran görüntüleri
 
 | Anasayfa | Kurulum |
