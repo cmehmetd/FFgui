@@ -16,6 +16,8 @@ class QPushButton;
 class QLabel;
 class QTabWidget;
 class QGroupBox;
+class QDialog;
+class QTimer;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -39,6 +41,9 @@ private slots:
     void installLinuxFfmpeg();
     void onInstallFinished(int exitCode, QProcess::ExitStatus status);
     void refreshFfmpegStatus();
+    void onPostCountdownTick();
+    void cancelPostAction();
+    void executePostActionNow();
 
 private:
     QString ffmpegBinary() const { return m_ffmpegPath; }
@@ -52,6 +57,9 @@ private:
     void probeInputFile(const QString &path);
     void refreshMediaPreview();
     QString formatPreviewDuration(double secs) const;
+    void maybeRunPostAction();
+    void runPostAction(const QString &action);
+    QString postActionText(const QString &action) const;
 
     QString m_ffmpegPath = QStringLiteral("ffmpeg");
     QString m_ffprobePath = QStringLiteral("ffprobe");
@@ -115,6 +123,14 @@ private:
     QPushButton *m_stopButton = nullptr;
     QProgressBar *m_progressBar = nullptr;
     QString m_errorBuffer;
+
+    // Bittiğinde yapılacak işlem (yalnızca başarılı dönüşümde, geri sayımlı)
+    QComboBox *m_postActionCombo = nullptr;
+    QDialog *m_postDialog = nullptr;
+    QLabel *m_postCountdownLabel = nullptr;
+    QTimer *m_postTimer = nullptr;
+    QString m_pendingPostAction;
+    int m_postCountdown = 0;
 
     QProcess *m_process = nullptr;
     QProcess *m_installProcess = nullptr;

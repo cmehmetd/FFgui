@@ -6,7 +6,9 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QFileDialog>
+#include <QTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -482,6 +484,23 @@ MainWindow::MainWindow(QWidget *parent)
     bottomRow->addWidget(m_startButton);
     bottomRow->addWidget(m_stopButton);
     bottomBox->addLayout(bottomRow);
+
+    // Bittiğinde yapılacak işlem: ffmpeg komutunu etkilemez, yalnızca
+    // başarılı dönüşümden sonra çalışır (60 sn geri sayım + vazgeçme).
+    auto *postRow = new QHBoxLayout;
+    postRow->setSpacing(6);
+    postRow->addStretch(1);
+    auto *postLabel = new QLabel(tr("Bittiğinde:"), m_bottomWidget);
+    m_postActionCombo = new QComboBox(m_bottomWidget);
+    m_postActionCombo->addItem(tr("Hiçbir şey"), QStringLiteral("none"));
+    m_postActionCombo->addItem(tr("Programı kapat"), QStringLiteral("close"));
+    m_postActionCombo->addItem(tr("Uykuya al"), QStringLiteral("sleep"));
+    m_postActionCombo->addItem(tr("Bilgisayarı kapat"), QStringLiteral("shutdown"));
+    m_postActionCombo->setToolTip(tr("Yalnızca dönüşüm başarılı biterse çalışır; 60 saniye geri sayımla vazgeçilebilir"));
+    postLabel->setToolTip(m_postActionCombo->toolTip());
+    postRow->addWidget(postLabel);
+    postRow->addWidget(m_postActionCombo);
+    bottomBox->addLayout(postRow);
     mainLayout->addWidget(m_bottomWidget, 0);
 
     connect(m_startButton, &QPushButton::clicked, this, &MainWindow::startConversion);
@@ -1034,7 +1053,9 @@ void MainWindow::onProcessFinished(int exitCode, QProcess::ExitStatus status)
     setRunning(false);
     if (status == QProcess::NormalExit && exitCode == 0) {
         m_progressBar->setValue(100);
-        QMessageBox::information(this, tr("Tamamlandı"), tr("Dönüştürme başarıyla tamamlandı."));
+        // Başarılı bitince kullanıcı seçtiyse geri sayımlı işlem çalışır,
+        // seçilmediyse eskisi gibi bilgi penceresi gösterilir.
+        maybeRunPostAction();
     } else if (m_process->error() == QProcess::FailedToStart) {
         QMessageBox::critical(this, tr("ffmpeg başlatılamadı."),
                               tr("ffmpeg çalıştırılamadı. Kurulum sekmesinden yükleyin."));
@@ -1046,6 +1067,154 @@ void MainWindow::onProcessFinished(int exitCode, QProcess::ExitStatus status)
             QMessageBox::warning(this, tr("Dönüştürme başarısız"),
                                  tr("ffmpeg %1 koduyla bitti.\n\nSon çıktı:\n%2").arg(exitCode).arg(tail));
     }
+}
+
+QString MainWindow::postActionText(const QString &action) const
+{
+    if (action == QLatin1String("close"))
+        return tr("program kapatılacak");
+    if (action == QLatin1String("sleep"))
+        return tr("bilgisayar uykuya alınacak");
+    if (action == QLatin1String("shutdown"))
+        return tr("bilgisayar kapatılacak");
+    return QString();
+}
+
+void MainWindow::maybeRunPostAction()
+{
+    const QString action = m_postActionCombo ? m_postActionCombo->currentData().toString()
+                                             : QStringLiteral("none");
+    if (action.isEmpty() || action == QLatin1String("none")) {
+        QMessageBox::information(this, tr("Tamamlandı"), tr("Dönüştürme başarıyla tamamlandı."));
+        return;
+    }
+    // Önceki yarım kalmış sayaç varsa temizle.
+    cancelPostAction();
+    m_pendingPostAction = action;
+    m_postCountdown = 60;
+
+    m_postDialog = new QDialog(this);
+    m_postDialog->setWindowTitle(tr("Dönüştürme bitti"));
+    m_postDialog->setAttribute(Qt::WA_DeleteOnClose, false);
+    auto *layout = new QVBoxLayout(m_postDialog);
+    m_postCountdownLabel = new QLabel(m_postDialog);
+    m_postCountdownLabel->setWordWrap(true);
+    layout->addWidget(m_postCountdownLabel);
+
+    auto *btnRow = new QHBoxLayout;
+    btnRow->addStretch(1);
+    auto *nowButton = new QPushButton(tr("Hemen yap"), m_postDialog);
+    nowButton->setToolTip(tr("Geri sayımı beklemeden işlemi şimdi çalıştır"));
+    auto *cancelButton = new QPushButton(tr("Vazgeç"), m_postDialog);
+    cancelButton->setToolTip(tr("İşlemi iptal et, hiçbir şey yapma"));
+    btnRow->addWidget(nowButton);
+    btnRow->addWidget(cancelButton);
+    layout->addLayout(btnRow);
+
+    connect(nowButton, &QPushButton::clicked, this, &MainWindow::executePostActionNow);
+    connect(cancelButton, &QPushButton::clicked, this, &MainWindow::cancelPostAction);
+
+    m_postTimer = new QTimer(m_postDialog);
+    m_postTimer->setInterval(1000);
+    connect(m_postTimer, &QTimer::timeout, this, &MainWindow::onPostCountdownTick);
+    onPostCountdownTick(); // ilk yazıyı hemen yaz
+    m_postTimer->start();
+    m_postDialog->setModal(true);
+    m_postDialog->show();
+}
+
+void MainWindow::onPostCountdownTick()
+{
+    if (!m_postDialog || !m_postCountdownLabel) {
+        cancelPostAction();
+        return;
+    }
+    if (m_postCountdown <= 0) {
+        const QString action = m_pendingPostAction;
+        cancelPostAction();
+        runPostAction(action);
+        return;
+    }
+    m_postCountdownLabel->setText(
+        tr("Dönüştürme bitti.\n%1 saniye sonra %2.")
+            .arg(m_postCountdown)
+            .arg(postActionText(m_pendingPostAction)));
+    --m_postCountdown;
+}
+
+void MainWindow::cancelPostAction()
+{
+    // NOT: zamanlayıcı sinyalinin içinden de çağrılabilir; doğrudan
+    // delete güvensiz olur, o yüzden diyalog deleteLater ile silinir.
+    if (m_postTimer)
+        m_postTimer->stop();
+    m_postTimer = nullptr; // sahibi diyalog, onunla silinir
+    QDialog *dlg = m_postDialog;
+    m_postDialog = nullptr;
+    m_postCountdownLabel = nullptr;
+    m_pendingPostAction.clear();
+    m_postCountdown = 0;
+    if (dlg) {
+        dlg->close();
+        dlg->deleteLater();
+    }
+}
+
+void MainWindow::executePostActionNow()
+{
+    const QString action = m_pendingPostAction;
+    cancelPostAction();
+    if (!action.isEmpty() && action != QLatin1String("none"))
+        runPostAction(action);
+}
+
+void MainWindow::runPostAction(const QString &action)
+{
+    if (action == QLatin1String("close")) {
+        close();
+        return;
+    }
+#ifdef Q_OS_WIN
+    if (action == QLatin1String("sleep")) {
+        if (!QProcess::startDetached(QStringLiteral("rundll32.exe"),
+                                     {QStringLiteral("powrprof.dll,SetSuspendState"),
+                                      QStringLiteral("0,1,0")}))
+            QMessageBox::warning(this, tr("Uyku başarısız"),
+                                 tr("Bilgisayar uykuya alınamadı."));
+        return;
+    }
+    if (action == QLatin1String("shutdown")) {
+        if (!QProcess::startDetached(QStringLiteral("shutdown"),
+                                     {QStringLiteral("/s"), QStringLiteral("/t"),
+                                      QStringLiteral("0")}))
+            QMessageBox::warning(this, tr("Kapatma başarısız"),
+                                 tr("Bilgisayar kapatılamadı."));
+        return;
+    }
+#else
+    if (action == QLatin1String("sleep")) {
+        if (!QStandardPaths::findExecutable(QStringLiteral("systemctl")).isEmpty()) {
+            if (!QProcess::startDetached(QStringLiteral("systemctl"), {QStringLiteral("suspend")}))
+                QMessageBox::warning(this, tr("Uyku başarısız"),
+                                     tr("Bilgisayar uykuya alınamadı."));
+            return;
+        }
+        QMessageBox::warning(this, tr("Uyku desteklenmiyor"),
+                             tr("Uykuya alma için systemctl bulunamadı."));
+        return;
+    }
+    if (action == QLatin1String("shutdown")) {
+        if (!QStandardPaths::findExecutable(QStringLiteral("systemctl")).isEmpty()) {
+            if (!QProcess::startDetached(QStringLiteral("systemctl"), {QStringLiteral("poweroff")}))
+                QMessageBox::warning(this, tr("Kapatma başarısız"),
+                                     tr("Bilgisayar kapatılamadı."));
+            return;
+        }
+        QMessageBox::warning(this, tr("Kapatma desteklenmiyor"),
+                             tr("Kapatma için systemctl bulunamadı."));
+        return;
+    }
+#endif
 }
 
 QString MainWindow::distroDefaultCommand(const QString &distroKey) const

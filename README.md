@@ -33,6 +33,8 @@ işletim sisteminizin Qt temasını (açık/koyu kip dahil) olduğu gibi kullan�
   (önizleme yalın `ffmpeg` ile başlar, her sistemde PATH üzerinden çözülür)
 - Yalnızca ilerleme çubuğu; `ffmpeg` günlüğü gösterilmez, sonuç ve hata
   özeti pencereyle bildirilir
+- Bittiğinde yapılacak işlem: başarılı dönüşümden sonra programı kapatma,
+  uykuya alma ya da bilgisayarı kapatma (60 saniye geri sayımla vazgeçilebilir)
 - Responsive pencere: dar ekranda içerik kayar, kodlayıcı seçenekleri ve
   ilerleme alanı Kurulum sekmesinde gizlenir
 - Parantezli açıklamalar arayüzde gösterilmez; ilgili kutunun üzerine
