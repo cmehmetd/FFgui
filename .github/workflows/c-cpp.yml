@@ -1,0 +1,77 @@
+name: AppImage
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Bagimliliklari kur
+      run: |
+        sudo apt update
+        sudo apt install -y cmake g++ qt6-base-dev libgl1-mesa-dev file desktop-file-utils
+
+    - name: Derle
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+        cmake --build build
+
+    - name: Offscreen calisma kontrolu
+      run: |
+        QT_QPA_PLATFORM=offscreen timeout 5 ./build/FFgui || [ $? -eq 124 ]
+
+    - name: AppDir hazirla
+      run: |
+        DESTDIR="$GITHUB_WORKSPACE/AppDir" cmake --install build
+        # .desktop dosyasi repo'ya eklenmeden burada uretilir; simge olarak
+        # koddaki src/FFgui.png kullanilir, koda dokunulmaz.
+        cat > FFgui.desktop <<'EOF'
+        [Desktop Entry]
+        Name=FFgui
+        Comment=Qt ile basit FFmpeg arayuzu
+        Exec=FFgui
+        Icon=FFgui
+        Type=Application
+        Categories=AudioVideo;Video;
+        Terminal=false
+        StartupWMClass=FFgui
+        EOF
+        mkdir -p AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+        cp FFgui.desktop AppDir/usr/share/applications/
+        cp src/FFgui.png AppDir/usr/share/icons/hicolor/256x256/apps/FFgui.png
+        # linuxdeploy bunlari AppDir kokunde de arar
+        cp FFgui.desktop AppDir/
+        cp src/FFgui.png AppDir/FFgui.png
+        desktop-file-validate FFgui.desktop
+
+    - name: linuxdeploy indir
+      run: |
+        wget -q -O linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+        wget -q -O linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+        chmod +x linuxdeploy linuxdeploy-plugin-qt
+
+    - name: AppImage yap
+      run: |
+        export QMAKE="$(command -v qmake6 || command -v qmake || echo /usr/lib/qt6/bin/qmake)"
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          export VERSION="${GITHUB_REF#refs/tags/v}"
+        else
+          export VERSION="1.0.0"
+        fi
+        ./linuxdeploy --appimage-extract-and-run --appdir AppDir --plugin qt --output appimage
+        ls -la ./*.AppImage
+
+    - name: AppImage yukle
+      uses: actions/upload-artifact@v4
+      with:
+        name: FFgui-AppImage
+        path: ./*.AppImage
