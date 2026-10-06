@@ -1,4 +1,4 @@
-name: AppImage
+name: Paketler
 
 on:
   push:
@@ -12,7 +12,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # Sira: once AppImage, sonra Windows, en son deb. Her is bir
+  # oncekinin bitmesini bekler (needs zinciri), ayni anda kosmaz.
+  appimage:
     runs-on: ubuntu-22.04
 
     steps:
@@ -84,3 +86,111 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: ./*.AppImage
+
+  windows:
+    needs: appimage
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Qt kur
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.2'
+        host: windows
+        target: desktop
+        arch: win64_msvc2022_64
+
+    - name: Derle
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --config Release
+
+    - name: EXE kontrolu
+      run: |
+        dir build\Release\FFgui.exe
+
+    - name: Deploy ve paketle
+      run: |
+        windeployqt build\Release\FFgui.exe
+        Compress-Archive -Path build\Release\* -DestinationPath FFgui-Windows.zip
+
+    - name: Windows paketini yukle
+      uses: actions/upload-artifact@v4
+      with:
+        name: FFgui-Windows
+        path: FFgui-Windows.zip
+
+    - name: Release'e ekle
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: FFgui-Windows.zip
+
+  deb:
+    needs: windows
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Bagimliliklari kur
+      run: |
+        sudo apt update
+        sudo apt install -y cmake g++ qt6-base-dev libgl1-mesa-dev file desktop-file-utils dpkg-dev
+
+    - name: Derle
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+        cmake --build build
+
+    - name: Deb paketle
+      run: |
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          VER="${GITHUB_REF#refs/tags/v}"
+        else
+          VER="1.0.0"
+        fi
+        DESTDIR="$GITHUB_WORKSPACE/pkg" cmake --install build
+        # .desktop ve control dosyalari repo'ya eklenmeden burada
+        # uretilir; koda dokunulmaz.
+        cat > FFgui.desktop <<'EOF'
+        [Desktop Entry]
+        Name=FFgui
+        Comment=Qt ile basit FFmpeg arayuzu
+        Exec=FFgui
+        Icon=FFgui
+        Type=Application
+        Categories=AudioVideo;Video;
+        Terminal=false
+        StartupWMClass=FFgui
+        EOF
+        mkdir -p pkg/usr/share/applications pkg/usr/share/icons/hicolor/256x256/apps pkg/DEBIAN
+        cp FFgui.desktop pkg/usr/share/applications/
+        cp src/FFgui.png pkg/usr/share/icons/hicolor/256x256/apps/FFgui.png
+        cat > pkg/DEBIAN/control <<EOF
+        Package: ffgui
+        Version: $VER
+        Section: video
+        Priority: optional
+        Architecture: amd64
+        Depends: libqt6widgets6, libqt6gui6, libqt6core6, ffmpeg
+        Maintainer: FFgui contributors
+        Description: Qt ile basit FFmpeg arayuzu
+         Videolari sekmeli pencerede ayarlayip ffmpeg ile donusturur.
+        EOF
+        dpkg-deb --build pkg "FFgui-${VER}-amd64.deb"
+        ls -la ./*.deb
+
+    - name: Deb paketini yukle
+      uses: actions/upload-artifact@v4
+      with:
+        name: FFgui-Deb
+        path: ./*.deb
+
+    - name: Release'e ekle
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ./*.deb
